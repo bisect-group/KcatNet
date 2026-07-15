@@ -8,7 +8,13 @@ from urllib.parse import unquote, urlparse
 
 import optuna
 import pandas as pd
-from tqdm.auto import tqdm
+try:
+    from src.utils.rich_progress import progress, write
+except ModuleNotFoundError:
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+    from src.utils.rich_progress import progress, write
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -378,7 +384,7 @@ def main():
     def objective(trial: optuna.Trial) -> float:
         hparams = suggest_hparams(trial, args)
         scores = []
-        progress = tqdm(jobs, desc=f"Trial {trial.number}", unit="job", leave=False)
+        progress = progress(jobs, desc=f"Trial {trial.number}", unit="job", leave=False)
         for job in progress:
             for seed in args.seeds:
                 score = run_trial_job(job, seed, hparams, args, trial.number)

@@ -684,7 +684,7 @@ def main():
         "--live_train_logs",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Stream train subprocess output to terminal (shows tqdm bars) while still writing train.log.",
+        help="Stream train subprocess output to terminal (shows Rich progress) while still writing train.log.",
     )
     parser.add_argument(
         "--live_predict_logs",

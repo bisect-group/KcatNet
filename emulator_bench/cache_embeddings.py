@@ -10,7 +10,13 @@ from typing import Iterable, List
 
 import numpy as np
 import torch
-from tqdm.auto import tqdm
+try:
+    from src.utils.rich_progress import progress, write
+except ModuleNotFoundError:
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+    from src.utils.rich_progress import progress, write
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -90,7 +96,7 @@ def _cache_proteins_single_device(args, sequences, device_str: str, worker_name:
         max_seq_len=args.prot_t5_max_seq_len,
         max_batch=args.prot_t5_max_batch,
     )
-    batch_iter = tqdm(prot_t5_batches, desc=f"Caching protein embeddings ({worker_name})", unit="batch")
+    batch_iter = progress(prot_t5_batches, desc=f"Caching protein embeddings ({worker_name})", unit="batch")
     for batch in batch_iter:
         prot5_by_sequence = embed_prot_t5_batch(prot_t5_model, prot_t5_tokenizer, batch, device)
         for sequence in batch:
@@ -210,7 +216,7 @@ def cache_ligands(args, smiles_values):
     print(f"Ligand cache device: {device}")
     trfm_model = load_smiles_transformer(device=device)
     written = 0
-    batch_iter = tqdm(range(0, len(pending), args.ligand_batch_size), desc="Caching ligand embeddings", unit="batch")
+    batch_iter = progress(range(0, len(pending), args.ligand_batch_size), desc="Caching ligand embeddings", unit="batch")
     for start in batch_iter:
         batch = pending[start : start + args.ligand_batch_size]
         items = ligand_cache_items(batch, trfm_model)

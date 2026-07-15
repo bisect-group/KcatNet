@@ -5,7 +5,13 @@ import sys
 from pathlib import Path
 
 import pandas as pd
-from tqdm.auto import tqdm
+try:
+    from src.utils.rich_progress import progress, write
+except ModuleNotFoundError:
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+    from src.utils.rich_progress import progress, write
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -283,7 +289,7 @@ def main():
     maybe_cache_embeddings(args)
 
     run_rows = []
-    for job in tqdm(jobs, desc="KcatNet benchmark", unit="job"):
+    for job in progress(jobs, desc="KcatNet benchmark", unit="job"):
         size_meta = split_sizes(Path(job["train_path"]), Path(job["val_path"]), Path(job["test_path"]))
         for seed in args.seeds:
             result_root = run_training(job, seed, args)
