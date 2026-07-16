@@ -6,7 +6,13 @@ import numpy as np
 import pandas as pd
 import torch
 from torch_geometric.loader import DataLoader
-from tqdm.auto import tqdm
+try:
+    from src.utils.rich_progress import progress, write
+except ModuleNotFoundError:
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+    from src.utils.rich_progress import progress, write
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -73,7 +79,7 @@ def main(args):
     preds = []
     labels = []
     with torch.no_grad():
-        for batch in tqdm(loader, desc="Predict", unit="batch"):
+        for batch in progress(loader, desc="Predict", unit="batch"):
             with _autocast_context(device, autocast_dtype=autocast_dtype):
                 reg_pred, _ = _forward_model(model, batch, device)
             # NumPy cannot consume bfloat16 tensors directly; cast before host conversion.

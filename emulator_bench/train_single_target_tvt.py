@@ -14,7 +14,13 @@ import torch.distributed as dist
 from torch_geometric.loader import DataLoader
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data.distributed import DistributedSampler
-from tqdm.auto import tqdm
+try:
+    from src.utils.rich_progress import progress, write
+except ModuleNotFoundError:
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+    from src.utils.rich_progress import progress, write
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -212,7 +218,7 @@ def evaluate_loader(model, loader, device, state, autocast_dtype=None, desc="Eva
     running_reg_loss = 0.0
     running_cluster_loss = 0.0
     mse_loss = torch.nn.MSELoss(reduction="mean")
-    iterator = tqdm(loader, desc=desc, unit="batch", leave=False) if state["is_main_process"] and show_progress else loader
+    iterator = progress(loader, desc=desc, unit="batch", leave=False) if state["is_main_process"] and show_progress else loader
 
     with torch.no_grad():
         for batch in iterator:
@@ -471,7 +477,7 @@ def main(args):
     started_at = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     no_improve = 0
 
-    epoch_progress = tqdm(range(1, args.epochs + 1), desc="Training", unit="epoch") if dist_state["is_main_process"] else range(1, args.epochs + 1)
+    epoch_progress = progress(range(1, args.epochs + 1), desc="Training", unit="epoch") if dist_state["is_main_process"] else range(1, args.epochs + 1)
     for epoch in epoch_progress:
         if train_sampler is not None:
             train_sampler.set_epoch(epoch)
@@ -479,7 +485,7 @@ def main(args):
         train_reg_loss = 0.0
         train_cluster_loss = 0.0
 
-        batch_iterator = tqdm(train_loader, desc=f"Epoch {epoch}", unit="batch", leave=False) if dist_state["is_main_process"] else train_loader
+        batch_iterator = progress(train_loader, desc=f"Epoch {epoch}", unit="batch", leave=False) if dist_state["is_main_process"] else train_loader
         for batch in batch_iterator:
             optimizer.zero_grad()
             with _autocast_context(device, autocast_dtype=autocast_dtype):

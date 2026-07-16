@@ -11,7 +11,13 @@ import numpy as np
 import pandas as pd
 import torch
 from torch_geometric.data import Dataset
-from tqdm.auto import tqdm
+try:
+    from src.utils.rich_progress import progress, write
+except ModuleNotFoundError:
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+    from src.utils.rich_progress import progress, write
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -56,7 +62,7 @@ class ProteinEmbeddingStore:
         self._cache: "OrderedDict[str, Dict[str, np.ndarray]]" = OrderedDict()
         if preload and sequences is not None:
             unique_sequences = sorted({normalize_sequence(sequence, max_len=self.max_len) for sequence in sequences})
-            iterator = tqdm(unique_sequences, desc="Preloading protein embeddings", unit="protein")
+            iterator = progress(unique_sequences, desc="Preloading protein embeddings", unit="protein")
             for normalized in iterator:
                 path = protein_cache_path(self.embeddings_dir, normalized, max_len=self.max_len)
                 if not path.exists():
@@ -172,14 +178,14 @@ def compute_pna_degrees(
     first_pass = dataset
     second_pass = dataset
     if show_progress:
-        first_pass = tqdm(dataset, total=len(dataset), desc=f"{desc_prefix} scan 1/2", unit="sample")
+        first_pass = progress(dataset, total=len(dataset), desc=f"{desc_prefix} scan 1/2", unit="sample")
     for item in first_pass:
         degrees = torch.bincount(item.prot_edge_index[1], minlength=item.prot_num_nodes)
         max_degree = max(max_degree, int(degrees.max()))
 
     degree_hist = torch.zeros(max_degree + 1, dtype=torch.long)
     if show_progress:
-        second_pass = tqdm(dataset, total=len(dataset), desc=f"{desc_prefix} scan 2/2", unit="sample")
+        second_pass = progress(dataset, total=len(dataset), desc=f"{desc_prefix} scan 2/2", unit="sample")
     for item in second_pass:
         degrees = torch.bincount(item.prot_edge_index[1], minlength=item.prot_num_nodes)
         degree_hist += torch.bincount(degrees, minlength=degree_hist.numel())
