@@ -384,12 +384,12 @@ def main():
     def objective(trial: optuna.Trial) -> float:
         hparams = suggest_hparams(trial, args)
         scores = []
-        progress = progress(jobs, desc=f"Trial {trial.number}", unit="job", leave=False)
-        for job in progress:
+        pbar = progress(jobs, desc=f"Trial {trial.number}", unit="job", leave=False)
+        for job in pbar:
             for seed in args.seeds:
                 score = run_trial_job(job, seed, hparams, args, trial.number)
                 scores.append(score)
-                progress.set_postfix(metric=f"{np_mean(scores):.4f}")
+                pbar.set_postfix(metric=f"{np_mean(scores):.4f}")
         return np_mean(scores)
 
     study.optimize(objective, n_trials=args.n_trials)
