@@ -1,10 +1,8 @@
-import csv
 import hashlib
 import json
 import math
 import random
 import sys
-from collections import defaultdict
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
@@ -22,6 +20,11 @@ EMULATOR_ROOT = REPO_ROOT.parents[1]
 DEFAULT_BASE_DIR = EMULATOR_ROOT / "data" / "processed" / "datasets" / "kinetic_dataset" / "kcat"
 DEFAULT_OUT_DIR = EMULATOR_ROOT / "outputs" / "baselines" / "KcatNet"
 DEFAULT_EMBEDDINGS_DIR = DEFAULT_OUT_DIR / "embeddings"
+CACHE_VERSION = 3
+PROT_T5_MODEL = "Rostlab/prot_t5_xl_uniref50"
+PROT_T5_DTYPE = "float16"
+ESM_MODEL = "esm2_t33_650M_UR50D"
+ESM_LAYER = 33
 DEFAULT_SPLIT_GROUPS = [
     "random_splits",
     "uniprot_time_splits",
@@ -43,7 +46,8 @@ def normalize_sequence(sequence: str, max_len: int = 1000) -> str:
 
 
 def protein_cache_key(sequence: str, max_len: int = 1000) -> str:
-    return _stable_hash(normalize_sequence(sequence, max_len=max_len))
+    settings = f"{PROT_T5_MODEL}|{PROT_T5_DTYPE}|{ESM_MODEL}|layer={ESM_LAYER}|max_len={max_len}"
+    return _stable_hash(f"{settings}|{normalize_sequence(sequence, max_len=max_len)}")
 
 
 def ligand_cache_key(smiles: str) -> str:
@@ -52,12 +56,12 @@ def ligand_cache_key(smiles: str) -> str:
 
 def protein_cache_path(embeddings_dir: Path, sequence: str, max_len: int = 1000) -> Path:
     key = protein_cache_key(sequence, max_len=max_len)
-    return embeddings_dir / "proteins" / key[:2] / f"{key}.npz"
+    return embeddings_dir / f"proteins_v{CACHE_VERSION}" / key[:2] / f"{key}.npz"
 
 
 def ligand_cache_path(embeddings_dir: Path, smiles: str) -> Path:
     key = ligand_cache_key(smiles)
-    return embeddings_dir / "ligands" / key[:2] / f"{key}.npz"
+    return embeddings_dir / f"ligands_v{CACHE_VERSION}" / key[:2] / f"{key}.npz"
 
 
 def ensure_parent(path: Path) -> None:
@@ -83,6 +87,13 @@ def set_seed(seed: int) -> None:
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
+
+
+def resolve_amp_dtype(device: torch.device):
+    """bf16 on Ampere or newer, fp16 on older GPUs, None (fp32) on CPU."""
+    if device.type != "cuda":
+        return None
+    return torch.bfloat16 if torch.cuda.get_device_capability(device)[0] >= 8 else torch.float16
 
 
 def read_table(path: Path) -> pd.DataFrame:
@@ -208,12 +219,11 @@ def discover_split_jobs(
         val_path = _find_split_file(group_dir, "val")
         test_path = _find_split_file(group_dir, "test")
         if train_path and val_path and test_path:
-            label = _flat_split_label(split_group)
             jobs.append(
                 {
                     "split_group": split_group,
-                    "split_name": label,
-                    "difficulty": label,
+                    "split_name": "all",
+                    "difficulty": _flat_split_label(split_group),
                     "root_dir": str(group_dir),
                     "train_path": str(train_path),
                     "val_path": str(val_path),

@@ -11,12 +11,12 @@ from typing import Iterable, List
 import numpy as np
 import torch
 try:
-    from src.utils.rich_progress import progress, write
+    from src.utils.rich_progress import progress
 except ModuleNotFoundError:
     import sys
     from pathlib import Path
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
-    from src.utils.rich_progress import progress, write
+    from src.utils.rich_progress import progress
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -25,7 +25,9 @@ if str(REPO_ROOT) not in sys.path:
 from emulator_bench.common import (
     DEFAULT_BASE_DIR,
     DEFAULT_EMBEDDINGS_DIR,
+    CACHE_VERSION,
     DEFAULT_SPLIT_GROUPS,
+    PROT_T5_MODEL,
     discover_split_jobs,
     ensure_parent,
     ligand_cache_path,
@@ -87,7 +89,7 @@ def _split_sequences_for_devices(sequences: Iterable[str], device_count: int) ->
 def _cache_proteins_single_device(args, sequences, device_str: str, worker_name: str = "main"):
     device = torch.device(device_str)
     print(f"[{worker_name}] Protein cache device: {device}")
-    prot_t5_model, prot_t5_tokenizer = load_prot_t5(args.prot_t5_model, device)
+    prot_t5_model, prot_t5_tokenizer = load_prot_t5(PROT_T5_MODEL, device)
     esm_model, batch_converter = load_esm_model(device)
     written = 0
     prot_t5_batches = build_prot_t5_batches(
@@ -162,7 +164,7 @@ def cache_proteins(args, sequences):
     args_dict = vars(args).copy()
     ctx = mp.get_context("spawn")
     worker_stats = []
-    with tempfile.TemporaryDirectory(prefix="kcatnet_cache_embeddings_") as tmpdir:
+    with tempfile.TemporaryDirectory(prefix="tmp_workers_", dir=args.embeddings_dir) as tmpdir:
         processes = []
         stats_paths = []
         for worker_idx, (shard, device_str) in enumerate(zip(shards, worker_devices)):
@@ -237,7 +239,6 @@ def main():
         default=None,
         help="Comma-separated devices for protein caching, e.g. cuda:0,cuda:1. Defaults to --device.",
     )
-    parser.add_argument("--prot_t5_model", type=str, default="Rostlab/prot_t5_xl_uniref50")
     parser.add_argument("--prot_t5_max_residues", type=int, default=4000)
     parser.add_argument("--prot_t5_max_batch", type=int, default=100)
     parser.add_argument("--overwrite", action="store_true")
@@ -262,7 +263,7 @@ def main():
     ligand_stats = cache_ligands(args, smiles_values)
 
     manifest = {
-        "cache_version": 2,
+        "cache_version": CACHE_VERSION,
         "base_dir": str(args.base_dir),
         "embeddings_dir": str(args.embeddings_dir),
         "sequence_col": args.sequence_col,
@@ -270,7 +271,7 @@ def main():
         "split_groups": list(args.split_groups),
         "thresholds": args.thresholds,
         "protein_devices": _parse_device_list(args.protein_devices, args.device),
-        "prot_t5_model": args.prot_t5_model,
+        "prot_t5_model": PROT_T5_MODEL,
         "protein_max_len": 1000,
         "ligand_smiles_encoder": "smiles_transformer_trfm_12_23000",
         "protein_model": "esm2_t33_650M_UR50D + ProtT5",

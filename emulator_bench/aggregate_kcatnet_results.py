@@ -1,6 +1,6 @@
 """Aggregate KcatNet results across seeds.
 
-Reads <out_dir>/<split_group>/<split_name>/seed_N/final_results_{val,test}.csv and writes
+Reads <out_dir>/<task>/<split_group>/<split_name>/seed_N/final_results_{val,test}.csv and writes
 <out_dir>/aggregate_kcatnet_results.csv with mean and variance per metric for every split.
 """
 import argparse
@@ -21,17 +21,17 @@ def main():
     args = parser.parse_args()
 
     rows = []
-    for seed_dir in sorted(args.out_dir.glob("*/*/seed_*")):
-        split_group, split_name = seed_dir.parts[-3:-1]
+    for seed_dir in sorted(args.out_dir.glob("*/*/*/seed_*")):
+        task, split_group, split_name = seed_dir.parts[-4:-1]
         for tvt_split in ("val", "test"):
             path = seed_dir / f"final_results_{tvt_split}.csv"
             if path.exists():
-                rows.append({"split_group": split_group, "split_name": split_name, "tvt_split": tvt_split, **pd.read_csv(path).iloc[0].to_dict()})
+                rows.append({"task": task, "split_group": split_group, "split_name": split_name, "tvt_split": tvt_split, **pd.read_csv(path).iloc[0].to_dict()})
     if not rows:
         print("No complete results found.")
         return
 
-    group_keys = ["split_group", "split_name", "tvt_split"]
+    group_keys = ["task", "split_group", "split_name", "tvt_split"]
     grouped = pd.DataFrame(rows).groupby(group_keys)
     agg = grouped[METRICS].agg(["mean", "var"])
     agg.columns = [f"{metric}_{stat}" for metric, stat in agg.columns]

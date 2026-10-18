@@ -1,4 +1,3 @@
-import io
 import hashlib
 import os
 import sys
@@ -13,12 +12,12 @@ import pandas as pd
 import torch
 from torch_geometric.data import Dataset
 try:
-    from src.utils.rich_progress import progress, write
+    from src.utils.rich_progress import progress
 except ModuleNotFoundError:
     import sys
     from pathlib import Path
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
-    from src.utils.rich_progress import progress, write
+    from src.utils.rich_progress import progress
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -28,7 +27,7 @@ UTILS_ROOT = REPO_ROOT / "utils"
 if str(UTILS_ROOT) not in sys.path:
     sys.path.insert(0, str(UTILS_ROOT))
 
-from emulator_bench.common import ligand_cache_path, normalize_sequence, protein_cache_path, read_table
+from emulator_bench.common import ligand_cache_path, normalize_sequence, protein_cache_path
 from Kcat_Dataset import MultiGraphData
 
 

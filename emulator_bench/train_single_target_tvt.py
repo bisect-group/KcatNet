@@ -3,7 +3,7 @@
 Recipe (utils/trainer.py and models/model_kcat.py of the original code):
 AdamW (lr from config_KcatNet.json, default weight decay), per-iteration cosine decay of the
 learning rate to min_lrate, gradient clipping, loss 0.9 * MSE + 0.1 * mincut loss, validation
-every epoch, best epoch by validation RMSE, no early stopping, fp32.
+every epoch, best epoch by validation RMSE, no early stopping, fp32 (`--amp` switches to bf16/fp16 autocast).
 """
 import argparse
 import json
@@ -28,10 +28,12 @@ except ModuleNotFoundError:
     from src.utils.rich_progress import progress
 
 from emulator_bench.common import (
+    CACHE_VERSION,
     DEFAULT_BASE_DIR,
     DEFAULT_CONFIG_PATH,
     read_table,
     require_columns,
+    resolve_amp_dtype,
     resolve_single_split_job,
     save_json,
     set_seed,
@@ -73,13 +75,14 @@ def _forward_model(model, batch, device):
     )
 
 
-def evaluate_loader(model, loader, device):
+def evaluate_loader(model, loader, device, amp_dtype=None):
     model.eval()
     preds, truths = [], []
     with torch.no_grad():
         for batch in loader:
-            reg_pred, _ = _forward_model(model, batch, device)
-            preds.append(reg_pred.squeeze().reshape(-1).cpu())
+            with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=amp_dtype is not None):
+                reg_pred, _ = _forward_model(model, batch, device)
+            preds.append(reg_pred.float().squeeze().reshape(-1).cpu())
             truths.append(batch.reg_y.squeeze().reshape(-1).cpu())
     preds_np = torch.cat(preds).numpy()
     truths_np = torch.cat(truths).numpy()
@@ -97,6 +100,8 @@ def _build_model(model_config, prot_deg, device):
 def main(args):
     set_seed(args.seed)
     device = torch.device(args.device)
+    amp_dtype = resolve_amp_dtype(device) if args.amp else None
+    scaler = torch.amp.GradScaler("cuda") if amp_dtype == torch.float16 else None
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -132,7 +137,7 @@ def main(args):
     prot_deg = get_or_compute_pna_degrees(
         datasets["train"],
         train_path=Path(args.train_path),
-        cache_root=Path(args.embeddings_dir) / "metadata" / "pna_degrees",
+        cache_root=Path(args.embeddings_dir) / f"pna_degrees_v{CACHE_VERSION}",
     )
     model = _build_model(config["params"], prot_deg, device)
 
@@ -162,15 +167,24 @@ def main(args):
         running_reg_loss = 0.0
         for batch in train_loader:
             optimizer.zero_grad()
-            reg_pred, cluster_loss = _forward_model(model, batch, device)
-            reg_loss = mse_loss(reg_pred.squeeze().reshape(-1), batch.reg_y.squeeze().reshape(-1))
-            (REGRESSION_WEIGHT * reg_loss + CLUSTER_WEIGHT * cluster_loss).backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), opt_cfg["clip"])
-            optimizer.step()
+            with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=amp_dtype is not None):
+                reg_pred, cluster_loss = _forward_model(model, batch, device)
+            reg_loss = mse_loss(reg_pred.float().squeeze().reshape(-1), batch.reg_y.squeeze().reshape(-1))
+            loss = REGRESSION_WEIGHT * reg_loss + CLUSTER_WEIGHT * cluster_loss.float()
+            if scaler is None:
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), opt_cfg["clip"])
+                optimizer.step()
+            else:
+                scaler.scale(loss).backward()
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), opt_cfg["clip"])
+                scaler.step(optimizer)
+                scaler.update()
             scheduler.step()
             running_reg_loss += float(reg_loss.item())
 
-        _, _, val_metrics = evaluate_loader(model, val_loader, device)
+        _, _, val_metrics = evaluate_loader(model, val_loader, device, amp_dtype)
         history.append(
             {
                 "epoch": epoch,
@@ -199,7 +213,7 @@ def main(args):
     model = _build_model(checkpoint["model_config"], checkpoint["prot_deg"], device)
     model.load_state_dict(checkpoint["model_state_dict"])
     for name, loader in (("val", val_loader), ("test", test_loader)):
-        preds, truths, metrics = evaluate_loader(model, loader, device)
+        preds, truths, metrics = evaluate_loader(model, loader, device, amp_dtype)
         pd.DataFrame([{key: metrics[key] for key in METRIC_KEYS}]).to_csv(out_dir / f"final_results_{name}.csv", index=False)
         pd.DataFrame({"pred_log10_value": preds, "label_log10_value": truths}).to_csv(out_dir / f"pred_label_{name}.csv", index=False)
         if name == "test":
@@ -244,6 +258,7 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", type=int, default=80)
     parser.add_argument("--seed", type=int, default=666)
     parser.add_argument("--device", type=str, default="cuda:0" if torch.cuda.is_available() else "cpu")
+    parser.add_argument("--amp", action="store_true", help="Mixed precision: bf16 on Ampere or newer, fp16 on older GPUs. Default is the original fp32.")
     parser.add_argument("--num_workers", type=int, default=0)
     parser.add_argument("--preload_proteins", action="store_true")
     parser.add_argument("--protein_cache_items", type=int, default=256)

@@ -1,7 +1,10 @@
 """Run KcatNet with its original settings on every discovered split, for every seed."""
 import argparse
+import os
+import queue
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 
@@ -39,13 +42,14 @@ def cache_embeddings(args):
     ]
     if args.thresholds:
         cmd.extend(["--thresholds", *args.thresholds])
-    subprocess.run(cmd, check=True, cwd=str(REPO_ROOT))
+    env = {**os.environ, "CUDA_VISIBLE_DEVICES": str(args.gpus[0])} if args.gpus else None
+    subprocess.run(cmd, check=True, cwd=str(REPO_ROOT), env=env)
 
 
-def run_training(job, seed, args):
-    result_dir = Path(args.out_dir) / job["split_group"] / job["split_name"] / f"seed_{seed}"
+def training_command(job, seed, args):
+    result_dir = Path(args.out_dir) / Path(args.base_dir).name / job["split_group"] / job["split_name"] / f"seed_{seed}"
     if (result_dir / "final_results_test.csv").exists() and not args.overwrite:
-        return result_dir
+        return None
     cmd = [
         sys.executable, str(TRAIN_SCRIPT),
         "--train_path", job["train_path"],
@@ -61,11 +65,19 @@ def run_training(job, seed, args):
         "--batch_size", str(args.batch_size),
         "--epochs", str(args.epochs),
         "--seed", str(seed),
-        "--device", args.device,
+        "--device", "cuda:0" if args.gpus else args.device,
         "--num_workers", str(args.num_workers),
     ]
-    subprocess.run(cmd, check=True, cwd=str(REPO_ROOT))
-    return result_dir
+    return cmd + ["--amp"] if args.amp else cmd
+
+
+def run_training(cmd, slots):
+    gpu = slots.get()
+    try:
+        env = None if gpu is None else {**os.environ, "CUDA_VISIBLE_DEVICES": gpu}
+        subprocess.run(cmd, check=True, cwd=str(REPO_ROOT), env=env)
+    finally:
+        slots.put(gpu)
 
 
 def main():
@@ -80,7 +92,10 @@ def main():
     parser.add_argument("--smiles_col", type=str, default="smiles")
     parser.add_argument("--target_col", type=str, default="log10_value")
     parser.add_argument("--seeds", nargs="+", type=int, default=[666, 777, 888])
-    parser.add_argument("--device", type=str, default="cuda:0")
+    parser.add_argument("--device", type=str, default="cuda:0", help="Training device when --gpus is not set.")
+    parser.add_argument("--gpus", nargs="+", default=None, help="Physical GPU ids, e.g. --gpus 0 1 2. Each run sees one GPU as cuda:0. The cache step uses the first.")
+    parser.add_argument("--runs_per_gpu", type=int, default=1, help="Concurrent runs per GPU (per --device when --gpus is not set).")
+    parser.add_argument("--amp", action="store_true", help="Mixed precision: bf16 on Ampere or newer, fp16 on older GPUs. Default is fp32.")
     parser.add_argument("--cache_device", type=str, default="cuda:0")
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--epochs", type=int, default=80)
@@ -104,10 +119,14 @@ def main():
     if not args.skip_cache:
         cache_embeddings(args)
 
-    for job in progress(jobs, desc="KcatNet benchmark", unit="job"):
-        for seed in args.seeds:
-            run_training(job, seed, args)
-    print(f"Results are in {args.out_dir}. Run aggregate_kcatnet_results.py to summarize seeds.")
+    commands = [cmd for job in jobs for seed in args.seeds if (cmd := training_command(job, seed, args))]
+    slots = queue.Queue()
+    for gpu in args.gpus or [None]:
+        for _ in range(args.runs_per_gpu):
+            slots.put(None if gpu is None else str(gpu))
+    with ThreadPoolExecutor(slots.qsize()) as pool:
+        list(progress(pool.map(lambda cmd: run_training(cmd, slots), commands), desc="KcatNet benchmark", unit="run", total=len(commands)))
+    print(f"Results are in {Path(args.out_dir) / Path(args.base_dir).name}. Run aggregate_kcatnet_results.py to summarize seeds.")
 
 
 if __name__ == "__main__":

@@ -1,10 +1,11 @@
 # KcatNet emulator_bench commands (original published settings, kcat only).
-# Run from the KcatNet submodule root with the EMULaToR env:
-#   PY=/home/adhil/.conda/envs/mldb/bin/python
+# Run from baselines/KcatNet (the submodule root) with the mldb env. Set PY first:
+PY=/home/adhil/.conda/envs/mldb/bin/python
 # Defaults:
 #   --base_dir  <EMULaToR>/data/processed/datasets/kinetic_dataset/kcat
 #   --out_dir   <EMULaToR>/outputs/baselines/KcatNet
 #   --embeddings_dir  <out_dir>/embeddings
+#   runs: <out_dir>/kcat/<split_group>/<split_name>/seed_<n>/  (<split_name> is "all" for flat split groups)
 #   --seeds 666 777 888
 #   --split_groups random_splits (= random_splits_grouped_sequence, random_splits_grouped_smiles)
 #                  uniprot_time_splits enzyme_sequence_splits substrate_splits
@@ -18,14 +19,8 @@ $PY emulator_bench/cache_embeddings.py --device cuda:0
 # 3) Train and evaluate all splits x seeds. Finished runs are skipped; --overwrite reruns them.
 $PY emulator_bench/run_split_benchmarks.py --device cuda:0 --cache_device cuda:0 --num_workers 4
 
-# 4) Parallel sweep: one process per GPU over the same output tree, after step 2.
-CUDA_VISIBLE_DEVICES=0 $PY emulator_bench/run_split_benchmarks.py --skip_cache --device cuda:0 --seeds 666 \
-  --num_workers 4 &
-CUDA_VISIBLE_DEVICES=1 $PY emulator_bench/run_split_benchmarks.py --skip_cache --device cuda:0 --seeds 777 \
-  --num_workers 4 &
-CUDA_VISIBLE_DEVICES=2 $PY emulator_bench/run_split_benchmarks.py --skip_cache --device cuda:0 --seeds 888 \
-  --num_workers 4 &
-wait
+# 4) Parallel sweep: runs spread over GPUs 0-2, two runs per GPU, bf16 mixed precision (--amp is optional; default is fp32).
+$PY emulator_bench/run_split_benchmarks.py --gpus 0 1 2 --runs_per_gpu 2 --amp --num_workers 4
 
 # 5) Aggregate over seeds.
 $PY emulator_bench/aggregate_kcatnet_results.py

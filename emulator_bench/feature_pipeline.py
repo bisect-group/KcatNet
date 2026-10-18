@@ -3,9 +3,8 @@ import os
 import sys
 from functools import lru_cache
 from pathlib import Path
-from typing import Dict, Iterable, List, Sequence, Tuple
+from typing import Dict, List, Sequence, Tuple
 
-import esm
 import esm.pretrained as esm_pretrained
 import numpy as np
 import torch
@@ -15,7 +14,6 @@ from rdkit import Chem
 from rdkit import RDLogger
 from rdkit import RDConfig
 from rdkit.Chem import ChemicalFeatures
-from rdkit.Chem.rdchem import BondType
 from torch_geometric.utils import add_self_loops, coalesce, remove_self_loops, to_undirected
 from transformers import T5EncoderModel, T5Tokenizer
 
