@@ -1,5 +1,6 @@
 import io
 import hashlib
+import os
 import sys
 import zipfile
 import zlib
@@ -210,13 +211,15 @@ def get_or_compute_pna_degrees(
     if verbose:
         print(f"Building PNA degree histogram from train split: {train_path}", flush=True)
     prot_deg = compute_pna_degrees(dataset, show_progress=verbose)
+    tmp_path = cache_path.with_name(f"{cache_path.name}.{os.getpid()}.tmp")
     torch.save(
         {
             "prot_deg": prot_deg.cpu(),
             "train_path": str(Path(train_path).resolve()),
         },
-        cache_path,
+        tmp_path,
     )
+    os.replace(tmp_path, cache_path)
     if verbose:
         print(f"Saved cached PNA degree histogram: {cache_path}", flush=True)
     return prot_deg

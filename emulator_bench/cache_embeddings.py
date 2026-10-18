@@ -38,7 +38,7 @@ from emulator_bench.common import (
 from emulator_bench.feature_pipeline import (
     build_prot_t5_batches,
     embed_prot_t5_batch,
-    ligand_cache_items,
+    ligand_cache_item,
     load_esm_model,
     load_prot_t5,
     load_smiles_transformer,
@@ -93,7 +93,6 @@ def _cache_proteins_single_device(args, sequences, device_str: str, worker_name:
     prot_t5_batches = build_prot_t5_batches(
         sequences,
         max_residues=args.prot_t5_max_residues,
-        max_seq_len=args.prot_t5_max_seq_len,
         max_batch=args.prot_t5_max_batch,
     )
     batch_iter = progress(prot_t5_batches, desc=f"Caching protein embeddings ({worker_name})", unit="batch")
@@ -106,7 +105,6 @@ def _cache_proteins_single_device(args, sequences, device_str: str, worker_name:
                 esm_model=esm_model,
                 batch_converter=batch_converter,
                 device=device,
-                protein_dtype=args.protein_dtype,
             )
             _save_npz(protein_cache_path(args.embeddings_dir, sequence), cache_item)
             written += 1
@@ -212,17 +210,12 @@ def cache_ligands(args, smiles_values):
         print("Ligand cache is already complete.")
         return {"ligands_total": len(smiles_values), "ligands_written": 0}
 
-    device = torch.device(args.device)
-    print(f"Ligand cache device: {device}")
-    trfm_model = load_smiles_transformer(device=device)
+    trfm_model = load_smiles_transformer()
     written = 0
-    batch_iter = progress(range(0, len(pending), args.ligand_batch_size), desc="Caching ligand embeddings", unit="batch")
-    for start in batch_iter:
-        batch = pending[start : start + args.ligand_batch_size]
-        items = ligand_cache_items(batch, trfm_model)
-        for smiles, item in items.items():
-            _save_npz(ligand_cache_path(args.embeddings_dir, smiles), item)
-            written += 1
+    batch_iter = progress(pending, desc="Caching ligand embeddings", unit="molecule")
+    for smiles in batch_iter:
+        _save_npz(ligand_cache_path(args.embeddings_dir, smiles), ligand_cache_item(smiles, trfm_model))
+        written += 1
         batch_iter.set_postfix(written=written, remaining=len(pending) - written)
 
     return {"ligands_total": len(smiles_values), "ligands_written": written}
@@ -246,10 +239,7 @@ def main():
     )
     parser.add_argument("--prot_t5_model", type=str, default="Rostlab/prot_t5_xl_uniref50")
     parser.add_argument("--prot_t5_max_residues", type=int, default=4000)
-    parser.add_argument("--prot_t5_max_seq_len", type=int, default=1000)
-    parser.add_argument("--prot_t5_max_batch", type=int, default=32)
-    parser.add_argument("--ligand_batch_size", type=int, default=256)
-    parser.add_argument("--protein_dtype", choices=["float16", "float32"], default="float16")
+    parser.add_argument("--prot_t5_max_batch", type=int, default=100)
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
 
@@ -272,7 +262,7 @@ def main():
     ligand_stats = cache_ligands(args, smiles_values)
 
     manifest = {
-        "cache_version": 1,
+        "cache_version": 2,
         "base_dir": str(args.base_dir),
         "embeddings_dir": str(args.embeddings_dir),
         "sequence_col": args.sequence_col,
@@ -280,7 +270,6 @@ def main():
         "split_groups": list(args.split_groups),
         "thresholds": args.thresholds,
         "protein_devices": _parse_device_list(args.protein_devices, args.device),
-        "protein_dtype": args.protein_dtype,
         "prot_t5_model": args.prot_t5_model,
         "protein_max_len": 1000,
         "ligand_smiles_encoder": "smiles_transformer_trfm_12_23000",

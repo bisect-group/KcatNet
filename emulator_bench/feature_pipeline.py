@@ -1,6 +1,7 @@
 import math
 import os
 import sys
+from functools import lru_cache
 from pathlib import Path
 from typing import Dict, Iterable, List, Sequence, Tuple
 
@@ -66,9 +67,9 @@ class TrfmSeq2seq(nn.Module):
         )
         self.out = nn.Linear(hidden_size, out_size)
 
-    def _encode(self, src):
-        embedded = self.embed(src)
-        embedded = self.pe(embedded)
+    def encode(self, src):
+        """Encode one molecule: src is (seq_len, 1). The positional encoding adds pe[:, :1] (original quirk)."""
+        embedded = self.pe(self.embed(src))
         output = embedded
         for idx in range(self.trfm.encoder.num_layers - 1):
             output = self.trfm.encoder.layers[idx](output, None)
@@ -79,33 +80,12 @@ class TrfmSeq2seq(nn.Module):
         output = output.detach().cpu().numpy()
         return np.hstack([np.mean(output, axis=0), np.max(output, axis=0), output[0, :, :], penultimate[0, :, :]])
 
-    def encode(self, src):
-        batch_size = src.shape[1]
-        if batch_size <= 100:
-            return self._encode(src)
-        out = self._encode(src[:, :100])
-        start = 100
-        while start < batch_size:
-            end = min(start + 100, batch_size)
-            out = np.concatenate([out, self._encode(src[:, start:end])], axis=0)
-            start = end
-        return out
-
-
-def _maybe_half(model: torch.nn.Module, device: torch.device) -> torch.nn.Module:
-    if device.type == "cuda":
-        model = model.to(device=device, dtype=torch.float16)
-        model.half()
-    else:
-        model = model.to(device=device)
-    model.eval()
-    return model
-
 
 def load_prot_t5(model_name_or_path: str, device: torch.device) -> Tuple[T5EncoderModel, T5Tokenizer]:
     model = T5EncoderModel.from_pretrained(model_name_or_path)
     tokenizer = T5Tokenizer.from_pretrained(model_name_or_path, do_lower_case=False)
-    return _maybe_half(model, device), tokenizer
+    model = model.to(device=device, dtype=torch.float16)
+    return model.eval(), tokenizer
 
 
 def load_esm_model(device: torch.device):
@@ -129,30 +109,18 @@ def load_smiles_transformer(device: torch.device | None = None):
 def build_prot_t5_batches(
     sequences: Sequence[str],
     max_residues: int = 4000,
-    max_seq_len: int = 1000,
-    max_batch: int = 32,
+    max_batch: int = 100,
 ) -> List[List[str]]:
+    """Same batching rule as the original `get_embeddings`: longest first, flush when full."""
     ordered = sorted(sequences, key=len, reverse=True)
     batches: List[List[str]] = []
     batch: List[str] = []
-    batch_residues = 0
-
-    for seq in ordered:
-        seq_len = len(seq)
-        if batch and (
-            len(batch) >= max_batch
-            or batch_residues + seq_len > max_residues
-            or seq_len > max_seq_len
-        ):
+    for idx, seq in enumerate(ordered, 1):
+        batch.append(seq)
+        residues = sum(len(item) for item in batch) + len(seq)
+        if len(batch) >= max_batch or residues >= max_residues or idx == len(ordered):
             batches.append(batch)
             batch = []
-            batch_residues = 0
-
-        batch.append(seq)
-        batch_residues += seq_len
-
-    if batch:
-        batches.append(batch)
     return batches
 
 
@@ -261,17 +229,15 @@ def protein_cache_item(
     esm_model,
     batch_converter,
     device: torch.device,
-    protein_dtype: str = "float16",
 ) -> Dict[str, np.ndarray]:
     esm_repr, contact_probs = esm_extract_last_layer(esm_model, batch_converter, sequence, device=device)
     edge_index, edge_weight = _contact_map(contact_probs.float())
 
-    protein_np_dtype = np.float16 if protein_dtype == "float16" else np.float32
     return {
-        "prot5": prot5_array.astype(protein_np_dtype, copy=False),
-        "esm": esm_repr.numpy().astype(protein_np_dtype, copy=False),
+        "prot5": prot5_array.astype(np.float32, copy=False),
+        "esm": esm_repr.numpy().astype(np.float16, copy=False),
         "edge_index": edge_index.numpy().astype(np.int32, copy=False),
-        "edge_weight": edge_weight.numpy().astype(np.float16, copy=False),
+        "edge_weight": edge_weight.numpy().astype(np.float32, copy=False),
     }
 
 
@@ -373,31 +339,26 @@ def split_smiles(smiles: str) -> str:
     return " ".join(arr)
 
 
-def smiles_to_vec_batch(smiles_values: Sequence[str], trfm_model: TrfmSeq2seq) -> np.ndarray:
+@lru_cache(maxsize=1)
+def _smiles_vocab():
+    return WordVocab.load_vocab(VOCAB_PATH)
+
+
+def smiles_to_vec(smiles: str, trfm_model: TrfmSeq2seq) -> np.ndarray:
     pad_index, unk_index, eos_index, sos_index = 0, 1, 2, 3
-    vocab = WordVocab.load_vocab(VOCAB_PATH)
+    vocab = _smiles_vocab()
     device = next(trfm_model.parameters()).device
 
-    def get_inputs(tokenized_smiles: str):
-        seq_len = 220
-        tokens = tokenized_smiles.split()
-        if len(tokens) > 218:
-            tokens = tokens[:109] + tokens[-109:]
-        ids = [vocab.stoi.get(token, unk_index) for token in tokens]
-        ids = [sos_index] + ids + [eos_index]
-        padding = [pad_index] * (seq_len - len(ids))
-        return ids + padding
-
-    input_ids = [get_inputs(split_smiles(smiles)) for smiles in smiles_values]
-    encoded = trfm_model.encode(torch.tensor(input_ids, dtype=torch.long, device=device).t())
-    return np.asarray(encoded, dtype=np.float32)
+    tokens = split_smiles(smiles).split()
+    if len(tokens) > 218:
+        tokens = tokens[:109] + tokens[-109:]
+    ids = [sos_index] + [vocab.stoi.get(token, unk_index) for token in tokens] + [eos_index]
+    ids += [pad_index] * (220 - len(ids))
+    encoded = trfm_model.encode(torch.tensor([ids], dtype=torch.long, device=device).t())
+    return np.asarray(encoded[0], dtype=np.float32)
 
 
-def ligand_cache_items(smiles_values: Sequence[str], trfm_model: TrfmSeq2seq) -> Dict[str, Dict[str, np.ndarray]]:
-    total_features = smiles_to_vec_batch(smiles_values, trfm_model)
-    items = {}
-    for idx, smiles in enumerate(smiles_values):
-        item = ligand_graph_features(smiles)
-        item["total_fea"] = total_features[idx].astype(np.float32, copy=False)
-        items[str(smiles)] = item
-    return items
+def ligand_cache_item(smiles: str, trfm_model: TrfmSeq2seq) -> Dict[str, np.ndarray]:
+    item = ligand_graph_features(smiles)
+    item["total_fea"] = smiles_to_vec(smiles, trfm_model)
+    return item

@@ -18,13 +18,15 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 
-DEFAULT_BASE_DIR = Path("/home/adhil/github/EMULaToR/data/processed/baselines/KcatNet")
-DEFAULT_EMBEDDINGS_DIR = DEFAULT_BASE_DIR / "embeddings"
+EMULATOR_ROOT = REPO_ROOT.parents[1]
+DEFAULT_BASE_DIR = EMULATOR_ROOT / "data" / "processed" / "datasets" / "kinetic_dataset" / "kcat"
+DEFAULT_OUT_DIR = EMULATOR_ROOT / "outputs" / "baselines" / "KcatNet"
+DEFAULT_EMBEDDINGS_DIR = DEFAULT_OUT_DIR / "embeddings"
 DEFAULT_SPLIT_GROUPS = [
     "random_splits",
+    "uniprot_time_splits",
     "enzyme_sequence_splits",
     "substrate_splits",
-    "group_shuffle_splits",
 ]
 DEFAULT_CONFIG_PATH = REPO_ROOT / "config_KcatNet.json"
 RANDOM_SPLIT_GROUP_ALIAS = "random_splits"
@@ -129,8 +131,6 @@ def _difficulty_labels_for_thresholds(names: List[str]) -> Dict[str, str]:
 def _flat_split_label(split_group: str) -> str:
     if is_random_split_group(split_group):
         return "random"
-    if split_group == "group_shuffle_splits":
-        return "group_shuffle"
     if split_group.endswith("_splits"):
         return split_group[: -len("_splits")]
     return split_group
