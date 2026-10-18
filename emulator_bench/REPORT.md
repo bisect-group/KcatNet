@@ -77,4 +77,4 @@ Only the kcat task applies to KcatNet.
 - The paper appendix says fp16 for KcatNet on V100. The original code uses fp32, so the wrapper uses fp32.
 - The first real cache run downloads ProtT5 (public Rostlab checkpoint; the original used a private path) and ESM2. This step is not tested.
 - Memory at full scale with batch size 16 is not measured.
-- Aggregation reports var where other wrappers report std. The real ProtT5 caching pass is untested.
+- The real ProtT5 caching pass is untested.

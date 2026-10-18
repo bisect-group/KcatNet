@@ -24,7 +24,7 @@ Outputs (default `<EMULaToR>/outputs/baselines/KcatNet`, set with `--out_dir`):
   Protein keys cover the ProtT5 and ESM2 models, ESM layer, ProtT5 dtype and length cap.
   Change `CACHE_VERSION` in `common.py` to force a rebuild.
 - `<task>/<split_group>/<split_name>/seed_<n>/` (`<task>` is the name of the `--base_dir` folder, `kcat`; `<split_name>` is `all` for flat split groups): `bestmodel.pth`, `final_results_{val,test}.csv`, `pred_label_{val,test}.csv`, `logfile.csv`, `run_summary.csv`
-- `aggregate_kcatnet_results.csv`: mean and variance over seeds
+- `aggregate_kcatnet_results.csv`: mean and std over seeds
 
 ## Run
 
@@ -51,4 +51,4 @@ Finished runs are skipped. All commands are in `commands.txt`.
 - `fast_models.py`: `KcatNet` subclasses with the same parameters and outputs but fewer host syncs and copies
 - `train_single_target_tvt.py`: one split, one seed, original training recipe
 - `run_split_benchmarks.py`: sweep over splits and seeds
-- `aggregate_kcatnet_results.py`: seed mean and variance
+- `aggregate_kcatnet_results.py`: seed mean and std

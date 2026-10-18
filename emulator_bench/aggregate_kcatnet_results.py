@@ -1,7 +1,7 @@
 """Aggregate KcatNet results across seeds.
 
 Reads <out_dir>/<task>/<split_group>/<split_name>/seed_N/final_results_{val,test}.csv and writes
-<out_dir>/aggregate_kcatnet_results.csv with mean and variance per metric for every split.
+<out_dir>/aggregate_kcatnet_results.csv with mean and std per metric for every split.
 """
 import argparse
 import sys
@@ -33,7 +33,7 @@ def main():
 
     group_keys = ["task", "split_group", "split_name", "tvt_split"]
     grouped = pd.DataFrame(rows).groupby(group_keys)
-    agg = grouped[METRICS].agg(["mean", "var"])
+    agg = grouped[METRICS].agg(["mean", "std"])
     agg.columns = [f"{metric}_{stat}" for metric, stat in agg.columns]
     agg["n_seeds"] = grouped.size()
     out_path = args.out_dir / "aggregate_kcatnet_results.csv"

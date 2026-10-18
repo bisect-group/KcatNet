@@ -363,7 +363,7 @@ def summarize_seed_runs(
             if len(metric_values) == 0:
                 continue
             row[f"{metric}_mean"] = float(metric_values.mean())
-            row[f"{metric}_var"] = float(metric_values.var(ddof=1)) if len(metric_values) > 1 else 0.0
+            row[f"{metric}_std"] = float(metric_values.std(ddof=1)) if len(metric_values) > 1 else 0.0
         out_rows.append(row)
     return pd.DataFrame(out_rows)
 
