@@ -65,7 +65,7 @@ def _save_npz(path: Path, item: dict) -> None:
     ensure_parent(path)
     tmp_path = path.with_suffix(path.suffix + ".tmp")
     with open(tmp_path, "wb") as handle:
-        np.savez_compressed(handle, **item)
+        np.savez(handle, **item)
     tmp_path.replace(path)
 
 

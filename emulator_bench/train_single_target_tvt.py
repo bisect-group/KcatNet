@@ -39,7 +39,7 @@ from emulator_bench.common import (
     set_seed,
 )
 from emulator_bench.dataset import CachedKcatDataset, LigandEmbeddingStore, ProteinEmbeddingStore, get_or_compute_pna_degrees
-from models.model_kcat import KcatNet
+from emulator_bench.fast_models import FastKcatNet
 from metrics import evaluate_reg
 
 # The original code builds AdamW without weight_decay, so the PyTorch default applies.
@@ -55,23 +55,31 @@ def _make_loader(dataset, batch_size, shuffle, num_workers):
         batch_size=batch_size,
         shuffle=shuffle,
         num_workers=num_workers,
-        persistent_workers=num_workers > 0,
+        pin_memory=True,
         follow_batch=["mol_x", "prot_node_esm"],
     )
 
 
 def _forward_model(model, batch, device):
+    # Sizes and residue indices come from the CPU batch so the model never reads GPU tensors.
+    batch_size, max_res = batch.num_graphs, int(batch.prot_num_nodes.max())
+    mask = torch.arange(max_res)[None] < batch.prot_num_nodes[:, None]
+    mask, res_idx = mask.to(device, non_blocking=True), mask.flatten().nonzero().squeeze(1).to(device, non_blocking=True)
     batch = batch.to(device)
     return model(
         mol_x=batch.mol_x,
         mol_x_feat=batch.mol_x_feat,
         mol_total_fea=batch.mol_total_fea,
-        residue_esm=batch.prot_node_esm,
+        residue_esm=batch.prot_node_esm.float(),
         residue_prot5=batch.prot_node_prot5,
         residue_edge_index=batch.prot_edge_index,
         residue_edge_weight=batch.prot_edge_weight,
         mol_batch=batch.mol_x_batch,
         prot_batch=batch.prot_node_esm_batch,
+        batch_size=batch_size,
+        max_res=max_res,
+        res_mask=mask,
+        res_idx=res_idx,
     )
 
 
@@ -82,10 +90,10 @@ def evaluate_loader(model, loader, device, amp_dtype=None):
         for batch in loader:
             with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=amp_dtype is not None):
                 reg_pred, _ = _forward_model(model, batch, device)
-            preds.append(reg_pred.float().squeeze().reshape(-1).cpu())
-            truths.append(batch.reg_y.squeeze().reshape(-1).cpu())
-    preds_np = torch.cat(preds).numpy()
-    truths_np = torch.cat(truths).numpy()
+            preds.append(reg_pred.float().squeeze().reshape(-1))
+            truths.append(batch.reg_y.squeeze().reshape(-1))
+    preds_np = torch.cat(preds).cpu().numpy()
+    truths_np = torch.cat(truths).cpu().numpy()
     return preds_np, truths_np, evaluate_reg(truths_np, preds_np)
 
 
@@ -94,7 +102,7 @@ def _build_model(model_config, prot_deg, device):
         "mol_in_channels", "prot_in_channels", "prot_evo_channels", "hidden_channels", "pre_layers",
         "post_layers", "aggregators", "scalers", "total_layer", "K", "heads", "dropout", "dropout_attn_score",
     ]
-    return KcatNet(prot_deg.to(device), device=device, **{key: model_config[key] for key in keys}).to(device)
+    return FastKcatNet(prot_deg.to(device), device=device, **{key: model_config[key] for key in keys}).to(device)
 
 
 def main(args):
@@ -164,7 +172,7 @@ def main(args):
     started = time.time()
     for epoch in progress(range(1, args.epochs + 1), desc="Training", unit="epoch"):
         model.train()
-        running_reg_loss = 0.0
+        running_reg_loss = torch.zeros((), dtype=torch.float64, device=device)
         for batch in train_loader:
             optimizer.zero_grad()
             with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=amp_dtype is not None):
@@ -182,13 +190,13 @@ def main(args):
                 scaler.step(optimizer)
                 scaler.update()
             scheduler.step()
-            running_reg_loss += float(reg_loss.item())
+            running_reg_loss += reg_loss.detach().double()
 
         _, _, val_metrics = evaluate_loader(model, val_loader, device, amp_dtype)
         history.append(
             {
                 "epoch": epoch,
-                "train_rmse": float(np.sqrt(running_reg_loss / len(train_loader))),
+                "train_rmse": float(np.sqrt(running_reg_loss.item() / len(train_loader))),
                 "val_rmse": val_metrics["rmse"],
                 "val_pearson": val_metrics["pearson"],
                 "val_r2_score": val_metrics["r2_score"],

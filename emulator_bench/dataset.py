@@ -156,7 +156,7 @@ class CachedKcatDataset(Dataset):
             mol_x=torch.from_numpy(ligand["atom_idx"]).long().reshape(-1, 1),
             mol_x_feat=torch.from_numpy(ligand["atom_feature"]).float(),
             mol_total_fea=torch.from_numpy(ligand["total_fea"]).float().reshape(1, -1),
-            prot_node_esm=torch.from_numpy(protein["esm"]).float(),
+            prot_node_esm=torch.from_numpy(protein["esm"]),
             prot_node_prot5=torch.from_numpy(protein["prot5"]).float(),
             prot_node_pos=torch.arange(len(normalized_sequence)).reshape(-1, 1),
             prot_seq=normalized_sequence,
@@ -174,21 +174,20 @@ def compute_pna_degrees(
     show_progress: bool = False,
     desc_prefix: str = "PNA degree cache",
 ) -> torch.Tensor:
-    max_degree = -1
-    first_pass = dataset
-    second_pass = dataset
+    """In-degree histogram over all residues of the rows; each unique sequence is read once."""
+    frame, store = dataset.frame, dataset.protein_store
+    counts = frame[dataset.sequence_col].astype(str).value_counts()
+    sequences = counts.index
     if show_progress:
-        first_pass = progress(dataset, total=len(dataset), desc=f"{desc_prefix} scan 1/2", unit="sample")
-    for item in first_pass:
-        degrees = torch.bincount(item.prot_edge_index[1], minlength=item.prot_num_nodes)
-        max_degree = max(max_degree, int(degrees.max()))
-
-    degree_hist = torch.zeros(max_degree + 1, dtype=torch.long)
-    if show_progress:
-        second_pass = progress(dataset, total=len(dataset), desc=f"{desc_prefix} scan 2/2", unit="sample")
-    for item in second_pass:
-        degrees = torch.bincount(item.prot_edge_index[1], minlength=item.prot_num_nodes)
-        degree_hist += torch.bincount(degrees, minlength=degree_hist.numel())
+        sequences = progress(sequences, total=len(counts), desc=desc_prefix, unit="sequence")
+    degree_hist = torch.zeros(1, dtype=torch.long)
+    for sequence in sequences:
+        edge_index = torch.from_numpy(store.get(sequence)["edge_index"]).long()
+        num_nodes = len(normalize_sequence(sequence, max_len=dataset.protein_max_len))
+        hist = torch.bincount(torch.bincount(edge_index[1], minlength=num_nodes)) * int(counts[sequence])
+        if hist.numel() > degree_hist.numel():
+            degree_hist = torch.nn.functional.pad(degree_hist, (0, hist.numel() - degree_hist.numel()))
+        degree_hist[: hist.numel()] += hist
     return degree_hist
 
 

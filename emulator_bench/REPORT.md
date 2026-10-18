@@ -51,7 +51,8 @@ It writes predictions and metrics to `--out_dir`, then an aggregator summarises 
 ## Deviations (speed-ups only)
 - The embedding cache is shared across splits and seeds. It uses the original feature code.
 - The PNA degree histogram is cached per train file.
-- `--num_workers` is optional.
+- `--num_workers` is optional. Data loading order is the same for any worker count.
+- Training uses `fast_models.FastKcatNet`, which has the same parameters and outputs as `models/model_kcat.py` (original code unchanged). Cache files are written uncompressed. Old compressed files still load.
 
 ## Commands
 From the KcatNet root, with `PY=/home/adhil/.conda/envs/mldb/bin/python`:

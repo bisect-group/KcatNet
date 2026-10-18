@@ -48,6 +48,7 @@ Finished runs are skipped. All commands are in `commands.txt`.
 - `common.py`: paths, split discovery, cache keys
 - `cache_embeddings.py`, `feature_pipeline.py`: build the embedding cache with the original feature code
 - `dataset.py`: cached dataset and PNA degree histogram cache
+- `fast_models.py`: `KcatNet` subclasses with the same parameters and outputs but fewer host syncs and copies
 - `train_single_target_tvt.py`: one split, one seed, original training recipe
 - `run_split_benchmarks.py`: sweep over splits and seeds
 - `aggregate_kcatnet_results.py`: seed mean and variance
