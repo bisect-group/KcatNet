@@ -1,0 +1,9 @@
+# Run from the KcatNet submodule root.
+PY=/home/adhil/.conda/envs/mldb/bin/python
+$PY emulator_bench/run_split_benchmarks.py --dry_run
+# Cache features once (GPU 2), then train all kcat splits for seed 666.
+CUDA_VISIBLE_DEVICES=2 $PY emulator_bench/cache_embeddings.py --device cuda:0
+$PY emulator_bench/run_split_benchmarks.py --skip_cache --gpus 2 --seeds 666 --runs_per_gpu 1 --num_workers 4
+# All seeds (666 777 888), cache included:
+$PY emulator_bench/run_split_benchmarks.py --gpus 2 --runs_per_gpu 1 --num_workers 4
+$PY emulator_bench/aggregate_kcatnet_results.py

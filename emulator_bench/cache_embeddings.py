@@ -25,6 +25,7 @@ if str(REPO_ROOT) not in sys.path:
 from emulator_bench.common import (
     DEFAULT_BASE_DIR,
     DEFAULT_EMBEDDINGS_DIR,
+    DEFAULT_OUT_DIR,
     CACHE_VERSION,
     DEFAULT_SPLIT_GROUPS,
     PROT_T5_MODEL,
@@ -37,7 +38,11 @@ from emulator_bench.common import (
     read_table,
     save_json,
 )
-from emulator_bench.feature_pipeline import (
+from emulator_bench.esm_deps import setup_esm
+
+setup_esm(DEFAULT_OUT_DIR)  # no-op when the launcher already set it up for another out dir
+
+from emulator_bench.feature_pipeline import (  # noqa: E402
     build_prot_t5_batches,
     embed_prot_t5_batch,
     ligand_cache_item,

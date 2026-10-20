@@ -17,6 +17,7 @@ except ModuleNotFoundError:
     sys.path.insert(0, str(REPO_ROOT.parents[1]))
     from src.utils.rich_progress import progress
 
+from emulator_bench.esm_deps import setup_esm
 from emulator_bench.common import (
     DEFAULT_BASE_DIR,
     DEFAULT_CONFIG_PATH,
@@ -105,6 +106,7 @@ def main():
     parser.add_argument("--dry_run", action="store_true")
     args = parser.parse_args()
     args.thresholds = normalize_threshold_args(args.thresholds)
+    setup_esm(Path(args.out_dir))  # child processes inherit PYTHONPATH and TORCH_HOME
     args.embeddings_dir = args.embeddings_dir or str(Path(args.out_dir) / "embeddings")
 
     jobs = discover_split_jobs(Path(args.base_dir), split_groups=args.split_groups, thresholds=args.thresholds)

@@ -12,7 +12,9 @@ random_splits_grouped_sequence/{train,val,test}.parquet
 random_splits_grouped_smiles/{train,val,test}.parquet
 uniprot_time_splits/{train,val,test}.parquet
 enzyme_sequence_splits/threshold_<t>/{train,val,test}.parquet
+enzyme_structure_splits/threshold_<t>/{train,val,test}.parquet
 substrate_splits/threshold_<t>/{train,val,test}.parquet
+conformer_cosine_splits/threshold_<t>/{train,val,test}.parquet
 ```
 
 Columns used: `sequence`, `smiles`, `log10_value`.
@@ -43,8 +45,16 @@ Useful flags of `run_split_benchmarks.py`: `--base_dir`, `--out_dir`, `--embeddi
 `--amp` (bf16, or fp16 on pre-Ampere GPUs; default is the original fp32).
 Finished runs are skipped. All commands are in `commands.txt`.
 
+## ESM package
+
+The mldb env holds the Biohub `esm` fork. It has no `esm.pretrained.load_model_and_alphabet`, which KcatNet needs.
+The launchers call `setup_esm(out_dir)`. If fair-esm is missing, it downloads the pinned wheel (sha256 checked)
+into `<out_dir>/pydeps` and puts it first on the path. Children inherit `PYTHONPATH`.
+`TORCH_HOME` defaults to `<out_dir>/torch_home`, so the ESM2 weights stay under `out_dir`. No env var needs setting by hand.
+
 ## Files
 
+- `esm_deps.py`: `setup_esm(out_root)` makes fair-esm 2.0.0 importable (see below)
 - `common.py`: paths, split discovery, cache keys
 - `cache_embeddings.py`, `feature_pipeline.py`: build the embedding cache with the original feature code
 - `dataset.py`: cached dataset and PNA degree histogram cache

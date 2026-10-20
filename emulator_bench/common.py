@@ -29,7 +29,9 @@ DEFAULT_SPLIT_GROUPS = [
     "random_splits",
     "uniprot_time_splits",
     "enzyme_sequence_splits",
+    "enzyme_structure_splits",
     "substrate_splits",
+    "conformer_cosine_splits",
 ]
 DEFAULT_CONFIG_PATH = REPO_ROOT / "config_KcatNet.json"
 RANDOM_SPLIT_GROUP_ALIAS = "random_splits"

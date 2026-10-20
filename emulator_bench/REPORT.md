@@ -46,6 +46,8 @@ It writes predictions and metrics to `--out_dir`, then an aggregator summarises 
 - `common.py`: EMULaToR layout defaults built from the repo path. `uniprot_time_splits` added. `group_shuffle_splits` dropped.
 - `aggregate_kcatnet_results.py`: rewritten for the new output layout.
 - `README.md`, `commands.txt`: rewritten, with no Optuna text.
+- Added `esm_deps.py`. The mldb `esm` package is the Biohub fork, so `setup_esm` unpacks the pinned fair-esm 2.0.0 wheel into `<out_dir>/pydeps` and sets `TORCH_HOME` to `<out_dir>/torch_home`. `cache_embeddings.py` and `run_split_benchmarks.py` call it.
+- `common.py`: default split groups now include `enzyme_structure_splits` and `conformer_cosine_splits`.
 - No original code outside `emulator_bench` was edited.
 
 ## Deviations (speed-ups only)
