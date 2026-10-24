@@ -61,11 +61,9 @@ def _make_loader(dataset, batch_size, shuffle, num_workers):
 
 
 def _forward_model(model, batch, device):
-    # Sizes and residue indices come from the CPU batch so the model never reads GPU tensors.
-    batch_size, max_res = batch.num_graphs, int(batch.prot_num_nodes.max())
-    mask = torch.arange(max_res)[None] < batch.prot_num_nodes[:, None]
-    mask, res_idx = mask.to(device, non_blocking=True), mask.flatten().nonzero().squeeze(1).to(device, non_blocking=True)
-    batch = batch.to(device)
+    # The residue maximum comes from the CPU batch so the model never reads GPU tensors.
+    max_res = int(batch.prot_num_nodes.max())
+    batch = batch.to(device, non_blocking=True)
     return model(
         mol_x=batch.mol_x,
         mol_x_feat=batch.mol_x_feat,
@@ -76,10 +74,8 @@ def _forward_model(model, batch, device):
         residue_edge_weight=batch.prot_edge_weight,
         mol_batch=batch.mol_x_batch,
         prot_batch=batch.prot_node_esm_batch,
-        batch_size=batch_size,
+        prot_num_nodes=batch.prot_num_nodes,
         max_res=max_res,
-        res_mask=mask,
-        res_idx=res_idx,
     )
 
 
@@ -109,6 +105,7 @@ def main(args):
     set_seed(args.seed)
     device = torch.device(args.device)
     amp_dtype = resolve_amp_dtype(device) if args.amp else None
+    torch.backends.cuda.matmul.allow_tf32 = args.tf32
     scaler = torch.amp.GradScaler("cuda") if amp_dtype == torch.float16 else None
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -157,6 +154,7 @@ def main(args):
         betas=tuple(opt_cfg["betas"]),
         eps=opt_cfg["eps"],
         amsgrad=opt_cfg["amsgrad"],
+        fused=device.type == "cuda",
     )
     total_iters = args.epochs * len(train_loader)
     lr_max, lr_min = opt_cfg["lrate"], opt_cfg["min_lrate"]
@@ -266,6 +264,7 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", type=int, default=80)
     parser.add_argument("--seed", type=int, default=666)
     parser.add_argument("--device", type=str, default="cuda:0" if torch.cuda.is_available() else "cpu")
+    parser.add_argument("--tf32", action="store_true", help="Allow TF32 matrix products in fp32 mode. Default is off.")
     parser.add_argument("--amp", action="store_true", help="Mixed precision: bf16 on Ampere or newer, fp16 on older GPUs. Default is the original fp32.")
     parser.add_argument("--num_workers", type=int, default=0)
     parser.add_argument("--preload_proteins", action="store_true")

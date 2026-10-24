@@ -69,7 +69,7 @@ def training_command(job, seed, args):
         "--device", "cuda:0" if args.gpus else args.device,
         "--num_workers", str(args.num_workers),
     ]
-    return cmd + ["--amp"] if args.amp else cmd
+    return cmd + [f for f, on in (("--amp", args.amp), ("--tf32", args.tf32)) if on]
 
 
 def run_training(cmd, slots):
@@ -96,6 +96,7 @@ def main():
     parser.add_argument("--device", type=str, default="cuda:0", help="Training device when --gpus is not set.")
     parser.add_argument("--gpus", nargs="+", default=None, help="Physical GPU ids, e.g. --gpus 0 1 2. Each run sees one GPU as cuda:0. The cache step uses the first.")
     parser.add_argument("--runs_per_gpu", type=int, default=1, help="Concurrent runs per GPU (per --device when --gpus is not set).")
+    parser.add_argument("--tf32", action="store_true", help="Allow TF32 matrix products in fp32 mode. Default is off.")
     parser.add_argument("--amp", action="store_true", help="Mixed precision: bf16 on Ampere or newer, fp16 on older GPUs. Default is fp32.")
     parser.add_argument("--cache_device", type=str, default="cuda:0")
     parser.add_argument("--batch_size", type=int, default=16)

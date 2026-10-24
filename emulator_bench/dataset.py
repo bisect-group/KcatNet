@@ -145,6 +145,8 @@ class CachedKcatDataset(Dataset):
 
         ligand = self.ligand_store.get(raw_smiles)
         protein = self.protein_store.get(raw_sequence)
+        # The model reduces over segments, so edges are sorted by target node.
+        order = np.argsort(protein["edge_index"][1], kind="stable")
 
         reg_y = None
         if self.target_col is not None and self.target_col in self.frame.columns:
@@ -160,8 +162,8 @@ class CachedKcatDataset(Dataset):
             prot_node_prot5=torch.from_numpy(protein["prot5"]).float(),
             prot_node_pos=torch.arange(len(normalized_sequence)).reshape(-1, 1),
             prot_seq=normalized_sequence,
-            prot_edge_index=torch.from_numpy(protein["edge_index"]).long(),
-            prot_edge_weight=torch.from_numpy(protein["edge_weight"]).float(),
+            prot_edge_index=torch.from_numpy(protein["edge_index"][:, order]).long(),
+            prot_edge_weight=torch.from_numpy(protein["edge_weight"][order]).float(),
             prot_num_nodes=len(normalized_sequence),
             reg_y=reg_y,
             mol_key=raw_smiles,
