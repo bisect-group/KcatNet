@@ -3,6 +3,7 @@
 Run from baselines/KcatNet:
     python -m pytest tests/test_original_equivalence.py -v
 The GPU test runs the Triton kernels. Pick the GPU with CUDA_VISIBLE_DEVICES; it skips without CUDA.
+Set EMULATOR_SYNTHETIC_FIXTURE=1 to use synthetic graphs only (emulator_bench/verify_equivalence.sh does).
 
 Batches go through emulator_bench.dataset (edges sorted by target node) and a PyG DataLoader, like
 the trainer. Graphs are real cached proteins and ligands when the local cache exists, else synthetic
@@ -13,6 +14,7 @@ replaced by plain torch versions of their documented semantics. Everything else 
 (CSR reductions, block-diagonal towers, edge-list mincut loss, GCN propagation) runs unchanged.
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -90,7 +92,10 @@ def cached_items(count=3, max_res=80):
     return proteins, ligands
 
 
-@pytest.fixture(params=["synthetic", "cached"])
+SOURCES = ["synthetic"] if os.environ.get("EMULATOR_SYNTHETIC_FIXTURE") == "1" else ["synthetic", "cached"]
+
+
+@pytest.fixture(params=SOURCES)
 def dataset(request):
     if request.param == "synthetic":
         rng = np.random.default_rng(0)
@@ -267,12 +272,64 @@ def test_cpu_matches_original(dataset, cpu_kernels, request, dtype, rtol_out, rt
     compare(original, fast, batch, rtol_out, rtol_grad)
 
 
+NOISE_DRAWS = 8  # a gradient entry flips by about 5% when a 1e-6 input change moves a tie; one draw misses it
+RTOL_OUT, RTOL_GRAD = 1e-4, 1e-3  # fp32 Triton against plain torch
+K = 10  # the kernel gap may be 10 times the fp32 noise (a 1e-6 input perturbation) before it counts as a defect
+
+
+def relative_errors(out, ref):
+    """Max abs error over max |reference| (as check_grads scales it) for the outputs, losses and every gradient."""
+    floor = 1e-2 * max(g.abs().max().item() for g in ref[3].values() if g is not None)
+
+    def error(a, b, floor=0.0):
+        return (a - b).abs().max().item() / max(b.abs().max().item(), floor, 1e-30)
+
+    errors = {what: error(a, b) for what, a, b in zip(("prediction", "cluster loss", "total loss"), out[:3], ref[:3])}
+    errors.update({f"grad {name}": error(out[3][name], ref[3][name], floor) for name in ref[3] if ref[3][name] is not None})
+    return errors
+
+
+@pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA for the Triton kernels")
 def test_gpu_triton_matches_original(dataset):
+    """Triton kernels (atomic adds) against the plain-torch original on the same GPU, in fp32.
+
+    The noise control is the original run again with every input feature perturbed by 1e-6 relative (u = 1e-6:
+    pure fp32 path), taking the worst of NOISE_DRAWS draws. Some gradients are discontinuous in the inputs of
+    this toy: the plain-torch original flips inter_convs.0.residue_mlp1.weight by 5% under a 1e-6 input change
+    in 4 of 10 draws, so the noise floor includes that flip.
+    Bounds: the prediction gap (step 0) within K times its noise floor. Every output, loss and gradient stays within
+    the CPU-test tolerance (RTOL_OUT, RTOL_GRAD); a tensor whose own noise floor exceeds that tolerance is held to
+    K times its own floor instead.
+    With EQUIV_NEGATIVE_CONTROL=1 the Triton model weights are scaled by 1.05, and this test must fail.
+    """
     device = "cuda:0"
     original, fast = build_models(dataset, device, torch.float32)
+    if os.environ.get("EQUIV_NEGATIVE_CONTROL") == "1":
+        with torch.no_grad():
+            for p in fast.parameters():
+                p.mul_(1.05)
     batch = to_device(make_batch(dataset), device, torch.float32)
-    compare(original, fast, batch, rtol_out=1e-4, rtol_grad=1e-3)
+    ref = objective(original, run_original, batch)
+    gaps = relative_errors(objective(fast, run_fast, batch), ref)
+    floors = {}
+    for seed in range(NOISE_DRAWS):
+        noisy, generator = batch.clone(), torch.Generator().manual_seed(seed)
+        for key in ("prot_node_esm", "prot_node_prot5", "mol_x_feat", "mol_total_fea", "prot_edge_weight"):
+            noisy[key] = batch[key] * (1 + 1e-6 * torch.randn(batch[key].shape, generator=generator).to(device))
+        for what, value in relative_errors(objective(original, run_original, noisy), ref).items():
+            floors[what] = max(floors.get(what, 0.0), value)
+    rtols = {what: RTOL_GRAD if what.startswith("grad") else RTOL_OUT for what in gaps}
+    budgets = {what: K * floors[what] if floors[what] > rtols[what] else rtols[what] for what in gaps}
+    ratios = {what: gaps[what] / budgets[what] for what in gaps}
+    worst = max(ratios, key=ratios.get)
+    print(
+        f"kcatnet triton: worst {worst}: gap={gaps[worst]:.3e}, floor={floors[worst]:.3e}, budget={budgets[worst]:.3e}, "
+        f"gap/budget={ratios[worst]:.3f}, K={K}; max gap/floor={max(gaps[w] / max(floors[w], 1e-7) for w in gaps):.2f}; "
+        f"step0 gap={gaps['prediction']:.3e}, floor={floors['prediction']:.3e}, ratio={gaps['prediction'] / max(floors['prediction'], 1e-7):.2f}"
+    )
+    assert gaps["prediction"] <= K * max(floors["prediction"], 1e-7)
+    assert ratios[worst] <= 1, f"{worst}: gap {gaps[worst]:.3e} exceeds budget {budgets[worst]:.3e}"
 
 
 def test_dataset_edge_order_keeps_original_output(dataset, float64_adjacency):
